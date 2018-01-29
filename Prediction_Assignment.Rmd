@@ -1,0 +1,190 @@
+---
+title: "Practical Machine Learning Project - Prediction Assignment"
+author: "David W Chang"
+date: "01/28/2018"
+output: 
+  html_document:
+    keep_md: true
+---
+
+## Overview
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify **how well they do it**. 
+
+In this project, there are data measured from *accelerometers* on the *belt, forearm, arm,* and *dumbell* of 6 participants. They are asked to perform *barbell lifts* correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise.
+
+## Approach
+The goal of this project is to predict the manner in which they did the exercise. My approach to select a model and make predictions are the following:
+
+1. First download the training and testing data sets. 
+2. After exploring the training data set, cleaning up the data by extracting only relevant feature sets. Also, eliminating the "NA" columns.
+3. Split the original training data set into two datasets for training and cross validation purpose.
+4. Random forest is generally a better model if the goal is for prediction. In other words, we'd want to reduce the variance of the model. Thus, Random forest model is selected.
+5. Train the Random model with multiple cores and use cross validaion data set to validate the accuracy of the model.
+6. If the accuracy of the model is in satisfied range, the model will be use to predict the testing data set and deliver the answers to the questions
+
+## Load required packages
+
+```{r setup, message=FALSE}
+# Load appropriate library
+require(caret)
+require(corrplot)
+require(Rtsne)
+require(stats)
+require(knitr)
+require(ggplot2)
+require(randomForest)
+require(foreach)
+require(doParallel)
+
+# setup cache
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preparing Data
+### Downloading Data to a local directory
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+Thanks for the source site: http://groupware.les.inf.puc-rio.br/har providing the data sets that are used in this project
+
+```{r download data}
+# Download training and testing data to a local directory
+train_url ="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train_fname = "./train_data.csv"
+test_fname = "./test_data.csv"
+if(!file.exists(train_fname))
+  download.file(train_url, destfile=train_fname, method="curl")
+if(!file.exists(test_fname))
+  download.file(test_url, destfile=test_fname, method="curl")
+
+# load the CSV files as data.frame 
+train.data = read.csv(train_fname, na.strings=c("NA",""))
+testing.data = read.csv(test_fname, na.strings=c("NA",""))
+dim(train.data)
+dim(testing.data)
+#str(train.data)
+#str(test.data)
+```
+
+The original training data has 19622 rows of measurements and 160 features. Whereas the testing data has 20 rows and the same 160 features. There is one column of target outcome named `classe` in training data set.
+
+### Split Training Data
+The train dataset is split into training and crossval dataset and remember outcomes column
+
+```{r Split data}
+set.seed(8888)
+
+Partition.idx = createDataPartition(train.data$classe, p=0.70, list=FALSE)
+training.data = train.data[Partition.idx,]
+crossval.data  = train.data[-Partition.idx,]
+
+# Save outcomes
+training.classe = train.data[Partition.idx, "classe"]
+crossval.classe = train.data[-Partition.idx, "classe"]
+
+dim.train = dim(training.data); print(dim.train)
+dim.cross = dim(crossval.data); print(dim.cross)
+
+str(training.data[,1:10])
+
+```
+
+### Cleaning All Data 
+The project task asks to use data from accelerometers on only *belt*, *forearm*, *arm*, and *dumpbell*, so
+filter these columns only accrodingly.
+
+```{r clean data}
+# filter columns on: belt, forearm, arm, dumbell
+filter = grepl("belt|arm|dumbell", names(train.data))
+training.data = training.data[, filter]
+crossval.data = crossval.data[, filter]
+testing.data = testing.data[, filter]
+#str(training.data)
+```
+
+Instead of dealing with less-accurate missing data columns, remove 
+all columns with NA values.
+
+```{r}
+# remove columns with NA, use testing data as referal for NA
+cols.without.na = colSums(is.na(testing.data)) == 0
+training.data = training.data[, cols.without.na]
+crossval.data = crossval.data[, cols.without.na]
+testing.data = testing.data[, cols.without.na]
+#str(training.data)
+```
+
+### Check for features's variance
+
+Based on the principal component analysis, it is important that features have maximum variance for maximum uniqueness, 
+so that each feature is as distant as possible from the other features.   
+```{r}
+# check for zero variance
+zero.var = nearZeroVar(training.data, saveMetrics=TRUE)
+zero.var
+```
+There is no features without variability (all has enough variance). So there is no feature to be removed further.  
+
+### Plot of correlation matrix  
+
+Plot a correlation matrix between features to validate the principal component analysis.
+The plot below shows average of correlation is not too high, so no further PCA processing is performed.   
+```{r fig.width=12, fig.height=12, dpi=72}
+corrplot.mixed(cor(training.data), lower="circle", upper="color", 
+               tl.pos="lt", diag="n", order="hclust", hclust.method="complete")
+```
+
+## Training the model
+To train the random forest model, we model 250x4(1000) trees. We have four cores so we split up the problem into four pieces. This is accomplished by executing the randomForest function four times, with the ntree argument set to 250
+```{r Model Training}
+registerDoParallel()
+variables <- training.data[-ncol(training.data)]
+rf = foreach(ntree=rep(250, 4), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+  randomForest(variables, training.classe, ntree=ntree) 
+}
+training.predictions <- predict(rf, newdata=training.data)
+confusionMatrix(training.predictions, training.classe)
+```
+## Validating the model 
+Using the cross validate data set to validate the model 
+
+```{r Validate Model}
+crossval.predictions <- predict(rf, newdata=crossval.data)
+confusionMatrix(crossval.predictions, crossval.classe)
+```
+
+The validation result showed the prediction accuracy around 0.9935. The trained model is good to go!
+
+## Predict the answers to the 20 questions with new testing data
+
+``` {r Predict with new Testing data}
+testing.predictions <- predict(rf, newdata=testing.data)
+testing.predictions
+```
+
+## Coursera provided code for submission
+
+Method to write answers to separate .txt files
+
+```{r Coursera code for submission}
+paw_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename, quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+
+## Write the answer to text files
+
+``` {r Now write to text files}
+paw_write_files(testing.predictions)
+```
