@@ -42,7 +42,3 @@ The goal of this project is to predict the manner in which they did the exercise
 4. Random forest is generally a better model if the goal is for prediction. In other words, we'd want to reduce the variance of the model. Thus, Random forest model is selected.
 5. Train the Random model with multiple cores and use cross validaion data set to validate the accuracy of the model.
 6. If the accuracy of the model is in satisfied range, the model will be use to predict the testing data set and deliver the answers to the questions
-
-## HTML report page (gh-pages)
-
-Please open this for easy access HTML version of report
